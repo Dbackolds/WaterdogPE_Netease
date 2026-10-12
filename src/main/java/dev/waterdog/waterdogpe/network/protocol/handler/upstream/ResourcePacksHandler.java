@@ -15,34 +15,29 @@
 
 package dev.waterdog.waterdogpe.network.protocol.handler.upstream;
 
-import dev.waterdog.waterdogpe.ProxyServer;
+import org.cloudburstmc.protocol.bedrock.packet.*;
 import dev.waterdog.waterdogpe.event.defaults.PlayerResourcePackApplyEvent;
 import dev.waterdog.waterdogpe.packs.NetEasePackFilter;
 import dev.waterdog.waterdogpe.packs.PackManager;
 import dev.waterdog.waterdogpe.player.ProxiedPlayer;
-import dev.waterdog.waterdogpe.scheduler.TaskHandler;
-import it.unimi.dsi.fastutil.longs.LongArraySet;
-import it.unimi.dsi.fastutil.longs.LongSet;
-import org.cloudburstmc.protocol.bedrock.packet.*;
 import org.cloudburstmc.protocol.common.PacketSignal;
 
-import java.util.LinkedList;
-import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.BitSet;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Upstream handler handling proxy manager resource packs.
  */
 public class ResourcePacksHandler extends AbstractUpstreamHandler {
 
-    // Send one queued chunk every this many ticks instead of bursting them out.
-    private static final int CHUNK_SEND_PERIOD = 4;
-
-    private final Queue<ResourcePackDataInfoPacket> pendingPacks = new LinkedList<>();
-    private final Queue<ResourcePackChunkRequestPacket> pendingChunks = new ConcurrentLinkedQueue<>();
-    private final LongSet sentChunks = new LongArraySet();
-    private ResourcePackDataInfoPacket sendingPack;
-    private TaskHandler<Runnable> sendTask;
+    // Packs offered to this client by id_version
+    private final Map<String, ResourcePackDataInfoPacket> offeredPacks = new HashMap<>();
+    private final Map<String, BitSet> sentChunks = new HashMap<>();
+    // The client writes chunks in order on one IO thread that also unzips finished packs, and only shows an
+    // in-order chunk on its progress bar once written. Chunk 0 goes last so the rest skip that queue, as on BDS.
+    // Holds at most one request per offered pack.
+    private final Map<String, ResourcePackChunkRequestPacket> heldFirstChunks = new HashMap<>();
 
     public ResourcePacksHandler(ProxiedPlayer player) {
         super(player);
@@ -57,15 +52,17 @@ public class ResourcePacksHandler extends AbstractUpstreamHandler {
                 this.player.disconnect("disconnectionScreen.noReason");
                 break;
             case SEND_PACKS:
+                // All up front, as the client's progress bar only counts packs it has been offered
                 for (String packIdVer : packet.getPackIds()) {
                     ResourcePackDataInfoPacket response = packManager.packInfoFromIdVer(packIdVer);
                     if (response == null) {
                         this.player.disconnect("disconnectionScreen.resourcePack");
                         break;
                     }
-                    this.pendingPacks.offer(response);
+                    if (this.offeredPacks.putIfAbsent(packIdVer, response) == null) {
+                        this.player.sendPacket(response);
+                    }
                 }
-                this.sendNextPacket();
                 break;
             case HAVE_ALL_PACKS:
                 // buildStackPacket handles protocol-version merge (behavior→resource for v898+)
@@ -78,7 +75,6 @@ public class ResourcePacksHandler extends AbstractUpstreamHandler {
                 this.player.getConnection().sendPacket(event.getStackPacket());
                 break;
             case COMPLETED:
-                this.stopSending();
                 if (!this.player.hasUpstreamBridge()) {
                     this.player.initialConnect(); // First connection
                 }
@@ -90,57 +86,45 @@ public class ResourcePacksHandler extends AbstractUpstreamHandler {
 
     @Override
     public PacketSignal handle(ResourcePackChunkRequestPacket packet) {
-        this.queueChunk(packet);
+        if (!this.player.isConnected()) {
+            return this.cancel();
+        }
+
+        String packIdVer = packet.getPackId() + "_" + packet.getPackVersion();
+        ResourcePackDataInfoPacket info = this.offeredPacks.get(packIdVer);
+        int index = packet.getChunkIndex();
+        if (info == null || index < 0 || index >= info.getChunkCount()) {
+            return this.cancel();
+        }
+
+        // Each chunk is sent once
+        BitSet sent = this.sentChunks.computeIfAbsent(packIdVer, id -> new BitSet());
+        if (sent.get(index) || (index == 0 && this.heldFirstChunks.containsKey(packIdVer))) {
+            return this.cancel();
+        }
+        if (index == 0 && sent.cardinality() < info.getChunkCount() - 1) {
+            this.heldFirstChunks.put(packIdVer, packet);
+            return this.cancel();
+        }
+
+        if (this.sendChunk(packIdVer, sent, packet) && sent.cardinality() == info.getChunkCount() - 1) {
+            ResourcePackChunkRequestPacket first = this.heldFirstChunks.remove(packIdVer);
+            if (first != null) {
+                this.sendChunk(packIdVer, sent, first);
+            }
+        }
         return this.cancel();
     }
 
-    private void queueChunk(ResourcePackChunkRequestPacket packet) {
-        this.pendingChunks.offer(packet);
-        if (this.sendTask == null) {
-            this.sendTask = ProxyServer.getInstance().getScheduler().scheduleRepeating(this::sendNextChunk, CHUNK_SEND_PERIOD);
-        }
-    }
-
-    private void sendNextChunk() {
-        if (!this.player.isConnected()) {
-            this.stopSending();
-            return;
-        }
-
-        ResourcePackChunkRequestPacket request = this.pendingChunks.poll();
-        if (request == null) {
-            return; // Nothing queued this tick; keep the loop alive for the next chunk request.
-        }
-
-        PackManager packManager = this.player.getProxy().getPackManager();
-        ResourcePackChunkDataPacket response = packManager.packChunkDataPacket(request.getPackId() + "_" + request.getPackVersion(), request);
+    private boolean sendChunk(String packIdVer, BitSet sent, ResourcePackChunkRequestPacket request) {
+        ResourcePackChunkDataPacket response = this.player.getProxy().getPackManager().packChunkDataPacket(packIdVer, request);
         if (response == null) {
             this.player.disconnect("Unknown resource pack!");
-            this.stopSending();
-            return;
+            return false;
         }
-
-        this.player.sendPacket(response);
-        this.sentChunks.add(response.getChunkIndex());
-        if (this.sendingPack != null && this.sentChunks.size() >= this.sendingPack.getChunkCount()) {
-            this.sendNextPacket();
-        }
-    }
-
-    private void stopSending() {
-        if (this.sendTask != null) {
-            this.sendTask.cancel();
-            this.sendTask = null;
-        }
-    }
-
-    private void sendNextPacket() {
-        this.sentChunks.clear();
-        this.sendingPack = null;
-        ResourcePackDataInfoPacket infoPacket = this.pendingPacks.poll();
-        if (infoPacket != null && this.player.isConnected()) {
-            this.sendingPack = infoPacket;
-            this.player.sendPacket(infoPacket);
-        }
+        sent.set(request.getChunkIndex());
+        // A batch of its own, as the client asks for many chunks at once and queued ones would share a batch
+        this.player.sendPacketImmediately(response);
+        return true;
     }
 }

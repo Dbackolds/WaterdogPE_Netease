@@ -84,7 +84,7 @@ public class ProxyBatchBridgeDecodeTest {
         buffer.writeBytes(PAYLOAD);
 
         BedrockPacketWrapper wrapper = BedrockPacketWrapper.create(packetId, 0, 0, null, buffer);
-        wrapper.setHeaderLength(HEADER.length);
+        wrapper.setHeaderLength((byte) HEADER.length);
 
         // Add directly instead of addPacket() so the batch starts out unmodified.
         this.batch = BedrockBatchWrapper.newInstance();
