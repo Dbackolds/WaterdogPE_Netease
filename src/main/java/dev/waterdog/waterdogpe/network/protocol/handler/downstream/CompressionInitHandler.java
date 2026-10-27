@@ -22,7 +22,9 @@ import dev.waterdog.waterdogpe.network.protocol.Signals;
 import dev.waterdog.waterdogpe.player.ProxiedPlayer;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockBatchWrapper;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
+import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkSettingsPacket;
+import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestNetworkSettingsPacket;
 import org.cloudburstmc.protocol.common.PacketSignal;
 
@@ -57,5 +59,17 @@ public class CompressionInitHandler extends AbstractDownstreamHandler {
         this.connection.setPacketHandler(nextHandler);
         this.connection.sendPacket(this.player.getLoginData().getLoginPacket());
         return Signals.CANCEL;
+    }
+
+    // The server checks the protocol on RequestNetworkSettings and refuses before NetworkSettings, so
+    // the refusal goes to the handler that knows whether this is the first join or a transfer
+    @Override
+    public PacketSignal handle(PlayStatusPacket packet) {
+        return this.nextHandler.handle(packet);
+    }
+
+    @Override
+    public PacketSignal handle(DisconnectPacket packet) {
+        return this.nextHandler.handle(packet);
     }
 }

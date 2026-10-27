@@ -17,13 +17,7 @@ package dev.waterdog.waterdogpe.utils.config.proxy;
 
 import lombok.Getter;
 import net.cubespace.Yamler.Config.Comment;
-import net.cubespace.Yamler.Config.Comments;
 import net.cubespace.Yamler.Config.Path;
-
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
 /**
  * The NXS signaling provider, which finds players for this proxy rather than waiting for them to
@@ -40,18 +34,7 @@ public class NxsSettings extends SettingsSection {
     @Comment("Provider origin used for discovery and registration")
     private String endpoint = "https://agent.warden.cloud";
 
-    @Path("advertise_addresses")
-    @Comments({
-            "Reachable UDP endpoints, as 198.51.100.1:19133 or [2001:db8::1]:19133.",
-            "Empty derives them from the addresses this host holds, which is wrong behind a NAT",
-            "or a forwarder. Name the endpoint players actually reach in that case."
-    })
-    private List<String> advertiseAddresses = new ArrayList<>();
-
-    @Path("data")
-    @Comments({
-            "Instance metadata. The region and pool keys place this instance,",
-            "anything else is a registration tag."
-    })
-    private Map<String, String> data = new HashMap<>();
+    @Path("advanced")
+    @Comment("Options most proxies leave unchanged")
+    private NxsAdvancedSettings advanced = new NxsAdvancedSettings();
 }

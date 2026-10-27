@@ -27,6 +27,7 @@ import dev.waterdog.waterdogpe.console.TerminalConsole;
 import dev.waterdog.waterdogpe.event.EventManager;
 import dev.waterdog.waterdogpe.event.defaults.DispatchCommandEvent;
 import dev.waterdog.waterdogpe.event.defaults.NetworkRegisterEvent;
+import dev.waterdog.waterdogpe.event.defaults.ProxyPingEvent;
 import dev.waterdog.waterdogpe.event.defaults.ProxyStartEvent;
 import dev.waterdog.waterdogpe.logger.MainLogger;
 import dev.waterdog.waterdogpe.network.EventLoops;
@@ -70,6 +71,8 @@ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import lombok.Getter;
 import lombok.Setter;
 import net.cubespace.Yamler.Config.InvalidConfigurationException;
+import org.cloudburstmc.netty.util.nethernet.IpRangeSet;
+import org.cloudburstmc.netty.util.nethernet.TrustedProxies;
 import org.cloudburstmc.protocol.common.util.Preconditions;
 
 import java.net.InetSocketAddress;
@@ -113,6 +116,7 @@ public class ProxyServer {
 
     private final List<NetworkInterface> interfaces = new ObjectArrayList<>();
     private NetherNetInterface netherNetInterface;
+    private IpRangeSet proxyProtocolProxies;
 
     @Getter
     private QueryHandler queryHandler;
@@ -296,12 +300,16 @@ public class ProxyServer {
         bindAddress = new InetSocketAddress(bindAddress.getHostString(), bindAddress.getPort());
         this.logger.info("Binding to {}", bindAddress);
 
-        if (this.getConfiguration().enableQuery()) {
+        ProxyConfig.Transport transport = this.getConfiguration().getTransport();
+        // Query answers on the RakNet pipeline
+        if (this.getConfiguration().enableQuery() && transport.raknet()) {
             this.queryHandler = new QueryHandler(this);
         }
 
-        this.registerInterface(new RakNetInterface(this));
-        // Registered even when disabled so plugins can see it; start() is a no-op until it is on.
+        if (transport.raknet()) {
+            this.registerInterface(new RakNetInterface(this));
+        }
+        // Registered even without NetherNet so plugins can see it; start() does nothing then.
         this.netherNetInterface = new NetherNetInterface(this);
         this.registerInterface(this.netherNetInterface);
 
@@ -484,8 +492,42 @@ public class ProxyServer {
         return this.configurationManager.getProxyConfig().getNetworkSettings();
     }
 
+    /**
+     * The proxies PROXY protocol headers are taken from: network_settings.proxy_protocol_whitelisted_ips, or none
+     * while PROXY protocol is off. Parsed once, as an entry may be a URL.
+     */
+    public synchronized IpRangeSet getProxyProtocolProxies() {
+        if (this.proxyProtocolProxies == null) {
+            NetworkSettings network = this.getNetworkSettings();
+            this.proxyProtocolProxies = network.enableProxyProtocol()
+                    ? TrustedProxies.parse(network.getProxyProtocolWhitelistedIps()) : IpRangeSet.empty();
+        }
+        return this.proxyProtocolProxies;
+    }
+
     public NetherNetSettings getNetherNetSettings() {
         return this.configurationManager.getProxyConfig().getNetherNetSettings();
+    }
+
+    /**
+     * Calls {@link ProxyPingEvent} for what this proxy tells players about itself, so a plugin's
+     * changes reach RakNet pings, NetherNet advertisements and the NXS listing alike.
+     *
+     * @param address The client asking, or null when none did, as for the NXS listing
+     */
+    public ProxyPingEvent callPingEvent(InetSocketAddress address) {
+        ProxyConfig config = this.getConfiguration();
+        ProxyPingEvent event = new ProxyPingEvent(
+                config.getMotd(),
+                config.getSubMotd(),
+                "Survival",
+                "MCPE",
+                ProtocolVersion.latest().getMinecraftVersion(),
+                this.getPlayerManager().getPlayers().values(),
+                config.getMaxPlayerCount(),
+                address);
+        this.getEventManager().callEvent(event);
+        return event;
     }
 
     /**

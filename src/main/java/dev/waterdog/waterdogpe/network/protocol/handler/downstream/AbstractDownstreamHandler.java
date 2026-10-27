@@ -53,6 +53,7 @@ public abstract class AbstractDownstreamHandler implements ProxyPacketHandler {
 
     protected final ClientConnection connection;
     protected final ProxiedPlayer player;
+    private boolean refused;
 
     public AbstractDownstreamHandler(ProxiedPlayer player, ClientConnection connection) {
         this.player = player;
@@ -309,8 +310,27 @@ public abstract class AbstractDownstreamHandler implements ProxyPacketHandler {
             }
         }
 
+        this.logRefused(message + " (" + packet.getStatus() + ")");
         failedTask.accept(message);
         return Signals.CANCEL;
+    }
+
+    /**
+     * Logs why the server turned the player away while connecting, which no other line says. Only
+     * the first refusal is logged, as a server refusing with a status disconnects right after.
+     */
+    protected void logRefused(String reason) {
+        if (this.refused) {
+            return;
+        }
+        this.refused = true;
+        this.player.getLogger().info("[{}|{}] -> Downstream [{}] refused the connection: {}", this.connection.getSocketAddress(),
+                this.player.getName(), this.connection.getServerInfo().getServerName(), reason);
+    }
+
+    protected void logRefused(DisconnectPacket packet) {
+        String message = packet.getKickMessage();
+        this.logRefused(message == null || message.isBlank() ? String.valueOf(packet.getReason()) : message);
     }
 
     @Override

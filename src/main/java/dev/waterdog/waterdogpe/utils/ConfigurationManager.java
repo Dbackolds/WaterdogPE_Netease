@@ -18,6 +18,7 @@ package dev.waterdog.waterdogpe.utils;
 import dev.waterdog.waterdogpe.ProxyServer;
 import dev.waterdog.waterdogpe.event.defaults.PlayerDisconnectedEvent;
 import dev.waterdog.waterdogpe.event.defaults.TransferCompleteEvent;
+import dev.waterdog.waterdogpe.network.nethernet.NetherNetProperties;
 import dev.waterdog.waterdogpe.network.serverinfo.ServerInfo;
 import dev.waterdog.waterdogpe.network.serverinfo.ServerInfoMap;
 import dev.waterdog.waterdogpe.plugin.PluginClassLoader;
@@ -66,6 +67,7 @@ public class ConfigurationManager {
         File configFile = new File(this.proxy.getDataPath().toString() + "/config.yml");
         ProxyConfig config = new ProxyConfig(configFile);
         config.init();
+        NetherNetProperties.applyOverrides(config.getNetherNetSettings().getSignaling());
         this.proxyConfig = config;
     }
 
