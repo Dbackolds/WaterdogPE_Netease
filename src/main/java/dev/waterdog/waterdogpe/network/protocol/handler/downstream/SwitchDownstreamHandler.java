@@ -20,8 +20,6 @@ import dev.mot.protocol.extension.BedrockCryptoUtils;
 import dev.waterdog.waterdogpe.event.defaults.ServerTransferEvent;
 import dev.waterdog.waterdogpe.network.connection.client.ClientConnection;
 import dev.waterdog.waterdogpe.network.connection.handler.ReconnectReason;
-import org.cloudburstmc.protocol.bedrock.data.ClientStoreEntrypointConfiguration;
-import org.cloudburstmc.protocol.bedrock.data.ServerConfigurationJoinInfo;
 import dev.waterdog.waterdogpe.network.protocol.ProtocolVersion;
 import dev.waterdog.waterdogpe.network.protocol.Signals;
 import dev.waterdog.waterdogpe.network.protocol.handler.TransferCallback;
@@ -38,9 +36,7 @@ import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.ObjectSet;
 import lombok.extern.log4j.Log4j2;
 import org.cloudburstmc.math.vector.Vector3f;
-import org.cloudburstmc.protocol.bedrock.data.GameType;
-import org.cloudburstmc.protocol.bedrock.data.HudElement;
-import org.cloudburstmc.protocol.bedrock.data.ScoreInfo;
+import org.cloudburstmc.protocol.bedrock.data.*;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerType;
 import org.cloudburstmc.protocol.bedrock.packet.*;
 import org.cloudburstmc.protocol.common.PacketSignal;
@@ -48,11 +44,7 @@ import org.cloudburstmc.protocol.common.PacketSignal;
 import javax.crypto.SecretKey;
 import java.net.URI;
 import java.security.interfaces.ECPublicKey;
-import java.util.Base64;
-import java.util.Collection;
-import java.util.Objects;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 import static dev.waterdog.waterdogpe.network.protocol.user.PlayerRewriteUtils.*;
 
@@ -333,14 +325,12 @@ public class SwitchDownstreamHandler extends AbstractDownstreamHandler {
             injectPosition(this.player.getConnection(), fakePosition, packet.getRotation(), rewriteData.getEntityId());
             this.player.getConnection().setTransferQueueActive(true);
             injectDimensionChange(this.player.getConnection(), newDimension, fakePosition,
-                    rewriteData.getEntityId(), player.getProtocol(), true, this.player.isSubChunkRequestMode(),
-                    this.player.getProxy().getConfiguration().isNeteaseClientSupport());
+                    rewriteData.getEntityId(), player.getProtocol(), true, this.player.isSubChunkRequestMode());
         } else if (newDimension == packet.getDimensionId()) {
             // Transfer between different dimensions
             injectPosition(this.player.getConnection(), packet.getPlayerPosition(), packet.getRotation(), rewriteData.getEntityId());
             injectDimensionChange(this.player.getConnection(), newDimension, packet.getPlayerPosition(),
-                    rewriteData.getEntityId(), player.getProtocol(), false, this.player.isSubChunkRequestMode(),
-                    this.player.getProxy().getConfiguration().isNeteaseClientSupport());
+                    rewriteData.getEntityId(), player.getProtocol(), false, this.player.isSubChunkRequestMode());
             transferCallback.onDimChangeSuccess(); // Simulate two dim-change behaviour
         } else {
             injectPosition(this.player.getConnection(), packet.getPlayerPosition(), packet.getRotation(), rewriteData.getEntityId());

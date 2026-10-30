@@ -134,7 +134,7 @@ public class TransferCallback {
         if (rewriteData.getDimension() != this.targetDimension) {
             injectPosition(this.player.getConnection(), fakePosition, rewriteData.getRotation(), rewriteData.getEntityId());
             rewriteData.setDimension(determineDimensionId(rewriteData.getDimension(), this.targetDimension));
-            injectDimensionChange(this.player.getConnection(), rewriteData.getDimension(), rewriteData.getSpawnPosition(), rewriteData.getEntityId(), this.player.getProtocol(), true, this.player.isSubChunkRequestMode(), this.player.getProxy().getConfiguration().isNeteaseClientSupport());
+            injectDimensionChange(this.player.getConnection(), rewriteData.getDimension(), rewriteData.getSpawnPosition(), rewriteData.getEntityId(), this.player.getProtocol(), true, this.player.isSubChunkRequestMode());
         }
 
         // Hand the client over to the new server and flush the queue so its real chunks reach the client. This
