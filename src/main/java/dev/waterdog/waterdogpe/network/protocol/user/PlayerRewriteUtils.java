@@ -60,6 +60,10 @@ public class PlayerRewriteUtils {
     private static final ByteBuf fakeChunkDataOverworld;
     private static final ByteBuf fakeChunkDataNether;
     private static final ByteBuf fakeChunkDataEnd;
+    // Request-mode LevelChunk payloads contain biomes only. Block sections arrive as sub-chunk responses.
+    private static final ByteBuf fakeBiomeOverworld;
+    private static final ByteBuf fakeBiomeNether;
+    private static final ByteBuf fakeBiomeEnd;
     private static final ByteBuf emptyChunkRaw;
     // 16x16 zeroed height map (byte per column)
     private static final ByteBuf emptyHeightMapData;
@@ -75,6 +79,9 @@ public class PlayerRewriteUtils {
         fakeChunkDataOverworld = createChunkData(1, 24);
         fakeChunkDataNether = createChunkData(1, 8);
         fakeChunkDataEnd = createChunkData(1, 16);
+        fakeBiomeOverworld = createBiomeData(24);
+        fakeBiomeNether = createBiomeData(8);
+        fakeBiomeEnd = createBiomeData(16);
         emptyChunkRaw = createChunkDataRaw();
         emptyHeightMapData = Unpooled.directBuffer(256).writeZero(256).asReadOnly();
     }
@@ -101,6 +108,24 @@ public class PlayerRewriteUtils {
         }
         buffer.writeByte(0); // Borders
         return buffer.asReadOnly();
+    }
+
+    private static ByteBuf createBiomeData(int biomeSections) {
+        final ByteBuf buffer = Unpooled.buffer();
+        writePalette(buffer, 0);
+        for (int i = 1; i < biomeSections; i++) {
+            buffer.writeByte((127 << 1) | 1); // link to previous biome palette
+        }
+        buffer.writeByte(0); // Borders
+        return buffer.asReadOnly();
+    }
+
+    private static ByteBuf biomeDataFor(int dimension) {
+        return switch (dimension) {
+            case DIMENSION_NETHER -> fakeBiomeNether;
+            case DIMENSION_END -> fakeBiomeEnd;
+            default -> fakeBiomeOverworld;
+        };
     }
 
     private static void writePalette(ByteBuf buffer, int runtimeId) {
@@ -371,7 +396,7 @@ public class PlayerRewriteUtils {
         session.sendPacketImmediately(packet);
     }
 
-    public static void injectDimensionChange(ProxiedConnection session, int dimensionId, Vector3f position, long runtimeId, ProtocolVersion version, boolean chunks, boolean requestSubChunks) {
+    public static void injectDimensionChange(ProxiedConnection session, int dimensionId, Vector3f position, long runtimeId, ProtocolVersion version, boolean chunks, boolean requestSubChunks, boolean neteaseClientSupport) {
         if (session == null || !session.isConnected()) {
             return;
         }
@@ -385,7 +410,7 @@ public class PlayerRewriteUtils {
 
         if (chunks) {
             injectChunkPublisherUpdate(session, position.toInt(), 3);
-            injectEmptyChunks(session, position, 3, dimensionId, version, requestSubChunks);
+            injectEmptyChunks(session, position, 3, dimensionId, version, requestSubChunks, neteaseClientSupport);
         }
 
         if (version.isAfterOrEqual(ProtocolVersion.MINECRAFT_PE_1_19_50)) {
@@ -411,14 +436,14 @@ public class PlayerRewriteUtils {
         session.sendPacketImmediately(packet);
     }
 
-    public static void injectEmptyChunks(ProxiedConnection session, Vector3f spawnPosition, int radius, int dimension, ProtocolVersion version, boolean requestSubChunks) {
+    public static void injectEmptyChunks(ProxiedConnection session, Vector3f spawnPosition, int radius, int dimension, ProtocolVersion version, boolean requestSubChunks, boolean neteaseClientSupport) {
         int chunkPositionX = spawnPosition.getFloorX() >> 4;
         int chunkPositionZ = spawnPosition.getFloorZ() >> 4;
 
         List<BedrockPacket> packets = new ObjectArrayList<>();
         for (int x = -radius; x <= radius; x++) {
             for (int z = -radius; z <= radius; z++) {
-                packets.add(injectEmptyChunk(chunkPositionX + x, chunkPositionZ + z, dimension, version, requestSubChunks));
+                packets.add(injectEmptyChunk(chunkPositionX + x, chunkPositionZ + z, dimension, version, requestSubChunks, neteaseClientSupport));
             }
         }
 
@@ -427,7 +452,7 @@ public class PlayerRewriteUtils {
         session.sendPacket(wrapper);
     }
 
-    public static LevelChunkPacket injectEmptyChunk(int chunkX, int chunkZ, int dimension, ProtocolVersion version, boolean requestSubChunks) {
+    public static LevelChunkPacket injectEmptyChunk(int chunkX, int chunkZ, int dimension, ProtocolVersion version, boolean requestSubChunks, boolean neteaseClientSupport) {
         LevelChunkPacket packet = new LevelChunkPacket();
         packet.setChunkX(chunkX);
         packet.setChunkZ(chunkZ);
@@ -441,7 +466,9 @@ public class PlayerRewriteUtils {
                 case DIMENSION_END -> 15;
                 default -> 23;
             });
-            packet.setData(Unpooled.EMPTY_BUFFER);
+            // NetEase 3.10 asserts in LevelChunk::getBiome when this blob is empty. Only fill biomes
+            // when netease_client_support is on, so other deployments keep the previous payload.
+            packet.setData(neteaseClientSupport ? biomeDataFor(dimension).retainedSlice() : Unpooled.EMPTY_BUFFER);
         } else if (version.isAfterOrEqual(ProtocolVersion.MINECRAFT_PE_1_18_30)) {
             packet.setSubChunksLength(1);
             switch (dimension) {
